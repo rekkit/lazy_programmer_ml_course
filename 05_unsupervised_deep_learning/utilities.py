@@ -19,3 +19,20 @@ def all_parity_pairs(nbit, dtype=np.float32):
                 X[ii,j] = 1
         Y[ii] = X[ii].sum() % 2
     return X.astype(dtype=dtype), Y.astype(dtype=dtype)
+
+def all_parity_pairs_with_sequence_labels(nbit, dtype=np.float32):
+    X, Y = all_parity_pairs(nbit)
+    N, t = X.shape
+
+    # we want every time step to have a label
+    Y_t = np.zeros(X.shape, dtype=np.int32)
+    for n in range(N):
+        ones_count = 0
+        for i in range(t):
+            if X[n,i] == 1:
+                ones_count += 1
+            if ones_count % 2 == 1:
+                Y_t[n,i] = 1
+
+    X = X.reshape(N, t, 1).astype(np.float32)
+    return X.astype(dtype=dtype), Y_t
