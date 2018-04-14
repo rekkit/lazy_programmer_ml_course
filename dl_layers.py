@@ -97,3 +97,22 @@ class recurrentLayer(object):
             elems=x,
             initializer=self.h0
         )
+
+class embeddingLayer(object):
+    def __init__(self, vocabulary_size, embedding_space_dim, layer_id):
+        self.vocabulary_size = vocabulary_size
+        self.embedding_space_dim = embedding_space_dim
+
+        # inititalize the embedding matrix
+        initializer = tf.contrib.layers.xavier_initializer(
+            uniform=False,
+            dtype=tf.float32
+        )
+
+        self.we = tf.Variable(
+            initializer((self.vocabulary_size, self.embedding_space_dim)),
+            name="we_%d" % layer_id
+        )
+
+    def forward(self, x):
+        return tf.nn.embedding_lookup(self.we, x)
