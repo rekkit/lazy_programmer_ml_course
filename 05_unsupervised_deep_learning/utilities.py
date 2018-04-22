@@ -48,7 +48,7 @@ def get_robert_frost():
     word2idx = {'START': 0, 'END': 1}
     current_idx = 2
     sentences = []
-    for line in open('large_files/robert_frost.txt'):
+    for line in open('small_files/robert_frost.txt'):
         line = line.strip()
         if line:
             tokens = remove_punctuation(line.lower()).split()
