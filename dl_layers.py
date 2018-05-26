@@ -100,6 +100,59 @@ class recurrentLayer(object):
                 initializer=self.h0
             )
 
+class ratedRecurrentLayer(recurrentLayer):
+    with tf.variable_scope("rru_layer"):
+        def __init__(self, n_in, n_out, layer_id, activation_fn=tf.nn.relu):
+            recurrentLayer.__init__(self, n_in, n_out, layer_id, activation_fn)
+
+            self.z0 = tf.Variable(
+                np.ones(n_out, dtype=np.float32),
+                name="z0_%d" % self.layer_id
+            )
+
+            self.z1 = tf.Variable(
+                np.ones(n_out, dtype=np.float32),
+                name="z1_%d" % self.layer_id
+            )
+
+        def recurrence(self, ht_1, xt):
+            """
+            This is the function by which recurrence is defined.
+            :param ht_1: The value of the hidden layer h at time step t-1.
+            :param xt: The value of the input at time step t.
+            :return: The value of the hidden layer h at time step t.
+            """
+            ht = self.z0 * ht_1 + self.z1 * self.activation_fn(
+                tf.matmul(tf.reshape(xt, (1, self.n_in)), self.wx) +
+                tf.matmul(tf.reshape(ht_1, (1, self.n_out)), self.wh) + self.bh
+            )
+
+            return tf.reshape(ht, (self.n_out,))
+
+class gatedRecurrentLayer(ratedRecurrentLayer):
+    with tf.variable_scope("gru_layer"):
+        def __init__(self, n_in, n_out, layer_id, activation_fn=tf.nn.relu):
+            ratedRecurrentLayer.__init__(self, n_in, n_out, layer_id, activation_fn)
+
+            self.r = tf.Variable(
+                np.ones(shape=n_out, dtype=np.float32),
+                name="r_%d" % layer_id
+            )
+
+        def recurrence(self, ht_1, xt):
+            """
+            This is the function by which recurrence is defined.
+            :param ht_1: The value of the hidden layer h at time step t-1.
+            :param xt: The value of the input at time step t.
+            :return: The value of the hidden layer h at time step t.
+            """
+            ht = self.z0 * ht_1 + self.z1 * self.activation_fn(
+                tf.matmul(tf.reshape(xt, (1, self.n_in)), self.wx) +
+                tf.matmul(self.r * tf.reshape(ht_1, (1, self.n_out)), self.wh) + self.bh
+            )
+
+            return tf.reshape(ht, (self.n_out,))
+
 class embeddingLayer(object):
     with tf.variable_scope("embedding_layer"):
         def __init__(self, vocabulary_size, embedding_space_dim, layer_id):
