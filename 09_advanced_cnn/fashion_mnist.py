@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
-from keras.models import Sequential
+from keras.models import Model
 from keras.losses import categorical_crossentropy
 from keras.optimizers import Adam
-from keras.layers import Dense, Dropout, Conv2D, MaxPool2D, BatchNormalization, Flatten, Softmax
+from keras.layers import Input, Dense, Activation, Dropout, Conv2D, MaxPool2D, BatchNormalization, Flatten, Softmax
 
 # read the data
 train = pd.read_csv("./large_files/fashion_mnist/fashion-mnist_train.csv")
@@ -23,79 +23,52 @@ x_test = np.array(x_test, dtype=np.float32).reshape([-1, 28, 28, 1]) / 255
 y_train = np.array(pd.get_dummies(y_train), dtype=int)
 y_test = np.array(pd.get_dummies(y_test), dtype=int)
 
-# let's create a sequential keras model
-model = Sequential()
+# let's create a keras model
+i = Input(shape=(28, 28, 1))
 
-# convolutional layer (3, 3) x 8
-model.add(
-    Conv2D(
-        input_shape=(28, 28, 1),
-        data_format="channels_last",
-        kernel_size=(3, 3),
-        filters=8,
-        activation="relu"
-    )
-)
+# first convpool layer
+x = Conv2D(kernel_size=(3, 3), filters=8)(i)
+x = BatchNormalization()(x)
+x = Activation("relu")(x)
 
-model.add(BatchNormalization())
+x = Conv2D(kernel_size=(3, 3), filters=16)(x)
+x = BatchNormalization()(x)
+x = Activation("relu")(x)
 
-# convolutional layer (3, 3) x 16
-model.add(
-    Conv2D(kernel_size=(3, 3), filters=16, activation="relu")
-)
+x = MaxPool2D(pool_size=(2, 2))(x)
 
-# maxpool
-model.add(
-    MaxPool2D(pool_size=(2, 2))
-)
+# second convpool layer
+x = Conv2D(kernel_size=(3, 3), filters=32)(x)
+x = BatchNormalization()(x)
+x = Activation("relu")(x)
 
-model.add(BatchNormalization())
+x = Conv2D(kernel_size=(3, 3), filters=64)(x)
+x = BatchNormalization()(x)
+x = Activation("relu")(x)
 
-# convolutional layer (3, 3) x 32
-model.add(
-    Conv2D(kernel_size=(3, 3), filters=32, activation="relu")
-)
-
-model.add(BatchNormalization())
-
-# convolutional layer (3, 3) x 60
-model.add(
-    Conv2D(kernel_size=(3, 3), filters=64, activation="relu")
-)
-
-# maxpool
-model.add(
-    MaxPool2D(pool_size=(2, 2))
-)
+x = MaxPool2D(pool_size=(2, 2))(x)
 
 # flatten and add fully connected layers
-model.add(Flatten())
+x = Flatten()(x)
 
-model.add(BatchNormalization())
+x = Dropout(rate=0.2)(x)
+x = Dense(512)(x)
+x = BatchNormalization()(x)
+x = Activation("relu")(x)
 
-# dropout
-model.add(Dropout(rate=0.2))
-
-model.add(
-    Dense(512, activation="relu")
-)
-
-model.add(BatchNormalization())
-
-model.add(Dropout(rate=0.3))
-
-model.add(
-    Dense(256, activation="relu")
-)
+x = Dropout(rate=0.3)(x)
+x = Dense(256)(x)
+x = BatchNormalization()(x)
+x = Activation("relu")(x)
 
 # add the final layer and apply the softmax function
-model.add(
-    Dense(10, activation="relu")
-)
+x = Dense(10)(x)
+x = BatchNormalization()(x)
+x = Activation("sigmoid")(x)
+x = Softmax()(x)
 
-model.add(
-    Softmax()
-)
+# model
+model = Model(inputs=i, outputs=x)
 
 # compile the model
 model.compile(optimizer=Adam(), loss=categorical_crossentropy, metrics=["accuracy"])
