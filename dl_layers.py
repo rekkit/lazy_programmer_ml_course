@@ -172,3 +172,35 @@ class embeddingLayer(object):
 
         def forward(self, x):
             return tf.nn.embedding_lookup(self.we, x)
+
+class batchNormalizationLayer(object):
+    def __init__(self, n_channels, axes=[0, 1, 2], beta=0.9):
+        self.n_channels = n_channels
+        self.mean = tf.Variable(np.zeros(self.n_channels), dtype=tf.float32, trainable=False)
+        self.var = tf.Variable(np.ones(self.n_channels), dtype=tf.float32, trainable=False)
+        self.offset = tf.Variable(np.zeros(self.n_channels), dtype=tf.float32)
+        self.scale = tf.Variable(np.ones(self.n_channels), dtype=tf.float32)
+        self.axes = axes
+        self.beta = beta
+
+    def forward(self, x, is_training):
+        if is_training:
+            # calculate the batch mean and variance
+            batch_mean, batch_var = tf.nn.moments(
+                x,
+                axes=self.axes
+            )
+
+            # calculate the exponential weighted moving average of the mean and variance
+            self.mean = self.beta * self.mean + (1 - self.beta) * batch_mean
+            self.var = self.beta * self.var + (1 - self.beta) * batch_var
+
+        # normalize the input
+        return tf.nn.batch_normalization(
+            x,
+            self.mean,
+            self.var,
+            self.offset,
+            self.scale,
+            variance_epsilon=0.00001
+        )
