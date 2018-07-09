@@ -204,3 +204,199 @@ class batchNormalizationLayer(object):
             self.scale,
             variance_epsilon=0.00001
         )
+
+class convolutionalLayer(object):
+    def __init__(
+        self,
+        filter_h,
+        filter_w,
+        maps_in,
+        maps_out,
+        layer_id,
+        with_bias=True,
+        activation_fn=tf.nn.relu,
+        stride_horizontal=1,
+        stride_vertical=1,
+        padding="VALID"
+    ):
+        self.filter_h = filter_h
+        self.filter_w = filter_w
+        self.maps_in = maps_in
+        self.maps_out = maps_out
+        self.layer_id = layer_id
+        self.with_bias = with_bias
+        self.activation_fn = activation_fn
+        self.stride_horizontal = stride_horizontal
+        self.stride_vertical = stride_vertical
+        self.padding = padding
+
+        # inititalize the embedding matrix
+        initializer = tf.contrib.layers.xavier_initializer(
+            uniform=False,
+            dtype=tf.float32
+        )
+
+        # print("filter_h: ", filter_h, "filter_w: ", filter_w, "maps_in: ", maps_in, "maps_out: ", maps_out)
+        self.w = tf.Variable(
+            initializer((self.filter_h, self.filter_w, self.maps_in, self.maps_out)),
+            name="conv_w_%d" % self.layer_id
+        )
+
+        if self.with_bias:
+            self.b = tf.Variable(
+                np.zeros(self.maps_out),
+                dtype=tf.float32,
+                name="conv_b_%d" % self.layer_id
+            )
+
+    def forwardLogits(self, x):
+        z = tf.nn.conv2d(
+            x,
+            filter=self.w,
+            strides=[1, self.stride_horizontal, self.stride_vertical, 1],
+            padding=self.padding
+        )
+
+        if self.with_bias:
+            z = z + self.b
+
+        return z
+
+    def forward(self, x):
+        z = self.forwardLogits(x)
+
+        return self.activation_fn(z)
+
+class resNetSubLayer(object):
+    def __init__(
+        self,
+        filter_h,
+        filter_w,
+        maps_in,
+        maps_out,
+        layer_id,
+        activation_fn,
+        stride_horizontal,
+        stride_vertical,
+        axes=[0, 1, 2],
+        beta=0.9
+    ):
+        self.filter_h = filter_h
+        self.filter_w = filter_w
+        self.maps_in = maps_in
+        self.maps_out = maps_out
+        self.layer_id = layer_id
+        self.activation_fn = activation_fn
+        self.stride_horizontal = stride_horizontal
+        self.stride_vertical = stride_vertical
+        self.axes = axes
+        self.beta = beta
+
+        # convolutional layer
+        self.conv_layer = convolutionalLayer(
+            filter_h=self.filter_h,
+            filter_w=self.filter_w,
+            maps_in=self.maps_in,
+            maps_out=self.maps_out,
+            layer_id=self.layer_id,
+            with_bias=False,
+            stride_horizontal=self.stride_horizontal,
+            stride_vertical=self.stride_vertical,
+            padding="SAME"
+        )
+
+        # batch normalization layer
+        self.batch_norm_layer = batchNormalizationLayer(
+            n_channels=self.maps_out,
+            axes=self.axes,
+            beta=self.beta
+        )
+
+    def forwardLogits(self, x, is_training):
+        # get the convolutional layer
+        z = self.conv_layer.forwardLogits(x)
+
+        # return after performing batch normalization
+        return self.batch_norm_layer.forward(z, is_training)
+
+    def forward(self, x, is_training):
+        # get the output after applying convolution and batch normalization
+        return self.activation_fn(
+            self.forwardLogits(x, is_training)
+        )
+
+class resNetLayer(object):
+    def __init__(
+        self,
+        filter_height,
+        filter_width,
+        maps_in,
+        maps_out,
+        layer_id,
+        activation_fn=tf.nn.relu,
+        stride_horizontal=[1, 1, 1],
+        stride_vertical=[1, 1, 1],
+        beta=[0.9, 0.9, 0.9]
+    ):
+        self.filter_height = filter_height
+        self.filter_width = filter_width
+        self.maps_in = maps_in
+        self.maps_out = maps_out
+        self.layer_id = layer_id
+        self.activation_fn = activation_fn
+        self.stride_horizontal = stride_horizontal
+        self.stride_vertical = stride_vertical
+        self.beta = beta
+
+        # we have 3 sub-layers in the resNet layer
+        self.layer_1 = resNetSubLayer(
+            filter_h=self.filter_height[0],
+            filter_w=self.filter_width[0],
+            maps_in=self.maps_in,
+            maps_out=self.maps_out[0],
+            layer_id=self.layer_id,
+            activation_fn=self.activation_fn,
+            stride_horizontal=self.stride_horizontal[0],
+            stride_vertical=self.stride_vertical[0],
+            beta=self.beta[0]
+        )
+
+        self.layer_2 = resNetSubLayer(
+            filter_h=self.filter_height[1],
+            filter_w=self.filter_width[1],
+            maps_in=self.maps_out[0],
+            maps_out=self.maps_out[1],
+            layer_id=self.layer_id,
+            activation_fn=self.activation_fn,
+            stride_horizontal=self.stride_horizontal[1],
+            stride_vertical=self.stride_vertical[1],
+            beta=self.beta[1]
+        )
+
+        self.layer_3 = resNetSubLayer(
+            filter_h=self.filter_height[2],
+            filter_w=self.filter_width[2],
+            maps_in=self.maps_out[1],
+            maps_out=self.maps_in,
+            layer_id=self.layer_id,
+            activation_fn=self.activation_fn,
+            stride_horizontal=self.stride_horizontal[2],
+            stride_vertical=self.stride_vertical[2],
+            beta=self.beta[2]
+        )
+
+    def forwardResidual(self, x, is_training):
+        z = self.layer_1.forward(x, is_training)
+        z = self.layer_2.forward(z, is_training)
+
+        return self.layer_3.forwardLogits(z, is_training)
+
+    def forwardLogits(self, x, is_training):
+        return self.forwardResidual(x, is_training) + x
+
+    def forward(self, x, is_training):
+        return self.activation_fn(
+            self.forwardLogits(x, is_training)
+        )
+
+
