@@ -1,14 +1,19 @@
+# keras imports
 from keras.models import Model
 from keras.optimizers import Adam
 from keras.applications import VGG16
 from keras.metrics import categorical_crossentropy
+from keras.layers import Dense, Flatten, Activation
 from keras.applications.vgg16 import preprocess_input
 from keras.preprocessing.image import ImageDataGenerator
-from keras.layers import Input, Dense, Flatten, Dropout, Activation
 
+# plotly import
+import plotly
+import plotly.graph_objs as go
+
+# other libraries
 import numpy as np
 from glob import glob
-from skimage.io import imshow, imread
 from sklearn.metrics import confusion_matrix
 
 # define the input image shape
@@ -34,7 +39,7 @@ vgg = VGG16(input_shape=IMAGE_SIZE + [3], weights="imagenet", include_top=False)
 
 # as a start, we don't want to train any of the layers
 for layer in vgg.layers:
-    layer.trainable = False
+    layer.trainable = True
 
 # flatten the output
 x = Flatten()(vgg.output)
@@ -49,7 +54,7 @@ model = Model(inputs=vgg.input, outputs=preds)
 # compile the model
 model.compile(
     loss=categorical_crossentropy,
-    optimizer=Adam(),
+    optimizer=Adam(lr=0.0001),
     metrics=["accuracy"]
 )
 
@@ -86,3 +91,48 @@ r = model.fit_generator(
     validation_steps=len(test_paths) // batch_size,
     epochs=n_epochs
 )
+
+# confusion matrix
+predictions = []
+labels = []
+n_samples = len(test_paths)
+i = 0
+
+for x, y in gen.flow_from_directory(directory=test_folder_path, target_size=IMAGE_SIZE, shuffle=False):
+    probs = model.predict(x)
+    preds = np.argmax(probs, axis=1)
+    y = np.argmax(y, axis=1)
+
+    # append the new predictions
+    predictions = np.append(predictions, preds)
+    labels = np.append(labels, y)
+    i += 1
+
+    if i % 50 == 0:
+        print(i)
+
+    if i >= n_samples:
+        break
+
+cm = confusion_matrix(y_true=labels, y_pred=predictions)
+
+# plot the confusion matrix
+g = go.Heatmap(
+    z=cm,
+    x=list(test_generator.class_indices.keys()),
+    y=list(test_generator.class_indices.keys())
+)
+
+layout = go.Layout(
+    title="Fruits 360 Confusion Matrix",
+    xaxis=dict(title="Ground Truth"),
+    yaxis=dict(title="Predicted Values")
+)
+
+figure = go.Figure(
+    data=[g],
+    layout=layout
+)
+
+plotly.offline.plot(figure)
+
