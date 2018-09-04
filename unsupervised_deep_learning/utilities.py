@@ -91,6 +91,7 @@ def get_wikipedia_data(n_files=None, vocab_size_limit=None, mandatory_words=[]):
     skip_next_line = False
 
     for file_name in input_files:
+        print("Loading file: " + 'large_files/AA/' + file_name)
         for line in open('large_files/AA/' + file_name, encoding="utf8"):
             # skip HTML tag and set the flag that skips the next line, which is a header
             if line[0] == "<":

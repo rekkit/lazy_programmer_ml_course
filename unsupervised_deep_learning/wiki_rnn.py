@@ -1,26 +1,30 @@
+# add the folder where the utilities.py file is stored and import get_wikipedia data
+import sys
+import os
+sys.path.append(os.getcwd().replace("\\", "/") + "/05_unsupervised_deep_learning/")
+from utilities import get_wikipedia_data
+
+# other imports
 import numpy as np
 import tensorflow as tf
 import plotly
 import plotly.graph_objs as go
 from sklearn.utils import shuffle
 from functools import reduce
+from dl_layers import embeddingLayer, hiddenLayer, gatedRecurrentLayer, recurrentLayer
 
-# load simple hidden layer from dl_layers.py
-from dl_layers import hiddenLayer, recurrentLayer, embeddingLayer
-
-# load function for creating the parity pair data
-import sys, os
-sys.path.append(os.getcwd().replace("\\", "/") + "/05_unsupervised_deep_learning")
-from utilities import get_robert_frost
 
 class recurrentNeuralNetwork(object):
-    def __init__(self, embedding_space_dim, hidden_layer_dimensions, activation_fn):
+    def __init__(self, embedding_space_dim, hidden_layer_dimensions, activation_fn, bias_multiplier=1, sampled_softmax=False, n_samples=100):
         self.embedding_space_dim = embedding_space_dim
         self.hidden_layer_dimensions = hidden_layer_dimensions
         self.activation_fn = activation_fn
+        self.bias_multiplier = bias_multiplier
+        self.sampled_softmax = sampled_softmax
+        self.n_samples = n_samples
         self.layers = []
 
-    def initializeLayers(self, vocabulary_dim):
+    def initializeLayers(self, vocabulary_dim, recurrent_layer_type):
         with tf.name_scope("initialize_layers"):
             self.vocabulary_dim = vocabulary_dim
 
@@ -34,7 +38,7 @@ class recurrentNeuralNetwork(object):
             # go through the hidden layer dimensions and initialize the recurrent layers
             for i, n_out in enumerate(self.hidden_layer_dimensions, start=len(self.layers)):
                 self.layers.append(
-                    recurrentLayer(n_in, n_out, i, self.activation_fn)
+                    recurrent_layer_type(n_in, n_out, i, self.activation_fn, self.bias_multiplier)
                 )
 
                 n_in = n_out
@@ -43,6 +47,10 @@ class recurrentNeuralNetwork(object):
             self.layers.append(
                 hiddenLayer(n_in, vocabulary_dim, len(self.layers), self.activation_fn)
             )
+
+    def forwardEmbeddings(self, x):
+        with tf.name_scope("forward_embeddings"):
+            return self.layers[0].forward(x)
 
     def forwardHiddenLayers(self, x):
         with tf.name_scope("forward_hidden_layers"):
@@ -84,15 +92,15 @@ class recurrentNeuralNetwork(object):
                 name="tfT"
             )
 
-    def initializeCost(self, n_classes, sampled_softmax=True, n_samples=100):
-        if sampled_softmax:
+    def initializeCost(self, n_classes):
+        if self.sampled_softmax:
             self.cost = tf.reduce_sum(
                 tf.nn.sampled_softmax_loss(
                     weights=tf.transpose(self.layers[-1].w),
                     biases=self.layers[-1].b,
                     labels=tf.reshape(self.tfT, (-1, 1)),
                     inputs=self.forwardHiddenLayers(self.tfX),
-                    num_sampled=n_samples,
+                    num_sampled=self.n_samples,
                     num_classes=n_classes
                 )
             )
@@ -114,10 +122,19 @@ class recurrentNeuralNetwork(object):
         # return predictions
         self.predict_op = self.predict(self.tfX)
 
+        # get embeddings operation
+        self.return_embeddings_op = self.forwardEmbeddings(self.tfX)
+
     def setSession(self, session):
         self.session = session
 
-    def fit(self, x, session, n_epochs, print_step=20, show_fig=True, output_fig=False):
+    def getEmbeddings(self, x):
+        return self.session.run(
+            self.return_embeddings_op,
+            feed_dict={self.tfX: x}
+        )
+
+    def fit(self, x, session, n_epochs, recurrent_layer_type, print_step=20, show_fig=True, end_prob=0.1, output_fig=False):
         # set the session to be used
         self.setSession(session)
 
@@ -125,13 +142,14 @@ class recurrentNeuralNetwork(object):
         # in order to get the vocabulary size, I flatten the list and get the number of unique values
         vocabulary_dim = len(
                 np.unique(
-                    reduce(lambda left, right: left + right, sentences)
+                    reduce(lambda left, right: left + right, x)
                 )
             ) + 2  # +2 because of START, END
 
         # initialize layers using the previously calculated value
         self.initializeLayers(
-            vocabulary_dim=vocabulary_dim
+            vocabulary_dim=vocabulary_dim,
+            recurrent_layer_type=recurrent_layer_type
         )
 
         # initialize placeholders, cost function and operations
@@ -172,7 +190,7 @@ class recurrentNeuralNetwork(object):
 
                 j_cost += sentence_cost
                 n_correct += np.sum(y_batch == predictions)
-                n_words += len(x[j])
+                n_words += len(y_batch)
 
                 if j % print_step == 0 and j > 0:
                     print(
@@ -216,6 +234,14 @@ class recurrentNeuralNetwork(object):
             plotly.offline.plot(figure)
 
     def generate(self, pi, word2idx):
+        """
+        :param pi: The distribution of starting words.
+        :param word2idx: The dictionary mapping words to their respective indices.
+        :param end_prob: The probability that the sentence should end. The original predict method was generating
+        sentences that were too short, so this is a penalty that makes sentences longer. The smaller this parameter is,
+        the smaller the likelihood of the END token being added to a sentence.
+        :return: Generates text based on the training data given.
+        """
         # convert word2idx -> idx2word
         idx2word = {v: k for k, v in word2idx.items()}
         v = len(pi)
@@ -247,21 +273,28 @@ class recurrentNeuralNetwork(object):
                     print(idx2word[x[0]]),
 
 
-sentences, word2idx = get_robert_frost()
+# learning
+sentences, word2idx = get_wikipedia_data(n_files=1, vocab_size_limit=2000, mandatory_words=["king", "man", "queen", "woman"])
+rnn = recurrentNeuralNetwork(embedding_space_dim=3, hidden_layer_dimensions=[128, 128, 256], activation_fn=tf.nn.relu,
+                             bias_multiplier=100)
+rnn.fit(
+    x=sentences,
+    session=tf.Session(),
+    n_epochs=1,
+    recurrent_layer_type=gatedRecurrentLayer
+)
 
-rnn = recurrentNeuralNetwork(20, [30, 30], tf.nn.relu)
-rnn.fit(sentences, session=tf.Session(), n_epochs=20, print_step=300, show_fig=True)
+sentences_embeddings = rnn.getEmbeddings([
+    word2idx[word] for word in word2idx.keys()
+])
+sentences_embeddings = list(sentences_embeddings)
 
-# generate Robert Frost poetry
-def generate_poetry(rnn):
-    # determine initial state distribution for starting sentences
-    v = len(word2idx)
-    pi = np.zeros(v)
-    for sentence in sentences:
-        pi[sentence[0]] += 1
-    pi /= pi.sum()
+g = go.Scatter3d(
+    x=[v[0] for v in sentences_embeddings],
+    y=[v[1] for v in sentences_embeddings],
+    z=[v[2] for v in sentences_embeddings],
+    mode="markers",
+    text=list(word2idx.keys())
+)
 
-    rnn.generate(pi, word2idx)
-
-generate_poetry(rnn)
-
+plotly.offline.plot([g])

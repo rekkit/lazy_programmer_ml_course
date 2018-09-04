@@ -1,4 +1,8 @@
-import keras.backend as K
+# general imports
+import matplotlib.pyplot as plt
+from advanced_cnn.style_transfer_utilities import ImageHelper, ContentGenerator
+
+# keras imports
 from keras.models import Sequential
 from keras.applications.vgg16 import VGG16
 from keras.layers.convolutional import Conv2D
@@ -25,3 +29,22 @@ def truncate_vgg16(input_shape, n_conv_layers):
                 break
 
     return model
+
+# instantiate an image helper
+img_helper = ImageHelper(img_path="./small_files/Kalemegdan-Winner.jpg")
+img_helper.norm_img(kind="rgb")
+
+# instantiate a generator
+generator = ContentGenerator(
+    model=truncate_vgg16(input_shape=img_helper.img.shape, n_conv_layers=9),
+    target_img=img_helper.img_normed
+)
+
+generator.fit(n_steps=30)
+
+# get the generated image
+ii = generator.w
+ii -= ii.min()
+ii /= ii.max()
+
+plt.imshow(ii.reshape(*generator.target_shape))
