@@ -1,10 +1,9 @@
 import numpy as np
-import pandas as pd
 import tensorflow as tf
 from glob import glob
 from dl_layers import resNetLayer
 from sklearn.utils import shuffle
-from skimage.io import imread, imshow
+from skimage.io import imread
 
 # training and test_paths
 train_paths = glob("./large_files/fruits-360/Training/Apple*/*.jp*g")
@@ -16,12 +15,13 @@ tfT = tf.placeholder(shape=(None, 100, 100, 3), dtype=tf.float32)
 
 # define the layer
 layer = resNetLayer(
-    filter_height=[3, 3, 3],
-    filter_width=[3, 3, 3],
-    maps_in=3,
-    maps_out=[8, 16],
+    filter_height=3,
+    filter_width=3,
     layer_id=0,
+    activation_fn=tf.nn.relu
 )
+
+layer.appendIn((100, 100, 3))
 
 # define the operations
 predict_train = layer.forwardLogits(tfX, is_training=True)
@@ -35,7 +35,7 @@ init = tf.global_variables_initializer()
 
 # define batch size and the number of epochs we want to do
 batch_size = 50
-n_epochs = 40
+n_epochs = 10
 
 # initialize variables
 sess.run(init)
