@@ -13,24 +13,32 @@ class ImageHelper(object):
     def __init__(self, img_path):
         self.img_path = img_path
         self.img = np.array(Image.open(self.img_path))
-        self.channel_means = np.mean(self.img, axis=2)
-        self.img_normed = None
+        self.channel_means = np.mean(self.img, axis=(0, 1))
+        self.img_transformed = deepcopy(self.img)
 
     def norm_img(self, kind="pixels"):
-        x = deepcopy(self.img)
-
         if kind == "pixels":
-            x = x / 255
+            self.img_transformed = self.img_transformed / 255
         elif kind == "rgb":
-            x = x - self.channel_means.reshape([*self.img.shape[:2], -1])
+            self.img_transformed = self.img_transformed - self.channel_means
 
-        self.img_normed = x
+    def permute_channels(self, x=None, kind="RGB2BGR"):
+        f, t = kind.split("2")
+        map = {char: i for i, char in enumerate(f)}
+
+        # get list that we need to reorder the input channels
+        perm_indices = [map[char] for char in t]
+
+        if x is None:
+            self.img_transformed = self.img_transformed[:, :, perm_indices]
+        else:
+            return x[:, :, perm_indices]
 
     def get_normed_img(self, flatten=False):
         if flatten:
-            return self.img_normed.reshape([-1])
+            return self.img_transformed.reshape([-1])
         else:
-            return self.img_normed
+            return self.img_transformed
 
 
 class ContentGenerator(object):
@@ -87,3 +95,4 @@ class ContentGenerator(object):
                 "Iteration %d of %d completed. Loss: %d. Time elapsed: %d minutes and %d seconds."
                 % (i+1, n_steps, l, time_elapsed // 60, time_elapsed % 60)
             )
+            
