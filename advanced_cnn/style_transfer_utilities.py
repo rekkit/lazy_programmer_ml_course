@@ -1,13 +1,16 @@
 # general imports
 import time
 import numpy as np
+import tensorflow as tf
 from PIL import Image
 from copy import deepcopy
 from scipy.optimize import fmin_l_bfgs_b
 
 # Keras imports
 import keras.backend as K
-
+from keras.models import Model, Sequential
+from keras.applications.vgg16 import VGG16
+from keras.layers import Input, Lambda, Conv2D
 
 class ImageHelper(object):
     def __init__(self, img_path):
@@ -59,12 +62,12 @@ class ContentGenerator(object):
             K.square(self.target_img - self.model.output)
         )
 
-        # define the gradients. This is important since, contrary to what we usually do, here we're optimizing wrt the
-        # input w
+        # define the gradients. This is important since, contrary to what we usually do, here we're optimizing with
+        # respect to the input w
         self.grads = K.gradients(loss=self.loss, variables=self.model.input)
 
-        # we're going to optimize the loss wrt w using sklearn. To do that, we need a function that returns the pair:
-        # (loss, loss')
+        # we're going to optimize the loss with respect to w using sklearn. To do that, we need a function that returns
+        # the pair: (loss, loss')
         self.get_loss_and_grads = K.function(
             inputs=[self.model.input],
             outputs=[self.loss] + self.grads
@@ -75,7 +78,30 @@ class ContentGenerator(object):
             [x_flat.reshape([-1, *self.target_shape])]
         )
 
-        return loss.astype(np.float64), grads.reshape([-1]).astype(np.float64)
+        return loss.astype(np.float64), grads.flatten().astype(np.float64)
+
+    def get_vgg(self, input_shape, n_conv_layers):
+        if n_conv_layers < 1 or n_conv_layers > 13:
+            raise ValueError("The VGG 16 model can be truncated at layers 1 through 13. You requested the model to be "
+                             "truncated at layer {0}".format(n_conv_layers))
+
+        # get the pre-trained model
+        vgg16 = VGG16(input_shape=input_shape, include_top=False)
+
+        # create a sequential model that is going to contain the requested layers from the VGG16 model and add layers
+        i = 0
+        model = Sequential()
+
+        for layer in vgg16.layers:
+            model.add(layer)
+
+            if layer.__class__ == Conv2D:
+                i += 1
+
+                if i > n_conv_layers:
+                    break
+
+        return model
 
     def fit(self, n_steps):
         start_time = time.time()
@@ -95,4 +121,86 @@ class ContentGenerator(object):
                 "Iteration %d of %d completed. Loss: %d. Time elapsed: %d minutes and %d seconds."
                 % (i+1, n_steps, l, time_elapsed // 60, time_elapsed % 60)
             )
-            
+
+
+class StyleGenerator(object):
+    def __init__(self, model, target_img):
+        self.model = model
+        self.input_img_shape = target_img.shape
+
+        # now calculate the targets and get the outputs of each of the convolutional layers
+        self.targets = [K.constant(y) for y in self.model.predict(target_img.reshape([-1, *self.input_img_shape]))]
+        self.outputs = [layer for layer in self.model]
+
+        # create the white noise that we need to change in order to get the same style as the input image
+        self.w = np.random.randn(*self.input_img_shape).reshape([-1, *self.input_img_shape])
+
+        # define the loss
+        self.loss = 0
+        for target, output in zip(self.targets, self.outputs):
+            self.loss += self.content_loss(target, output)
+
+        # define the gradients
+        self.grads = K.gradients(
+            loss=self.loss,
+            variables=self.model.input
+        )
+
+        # define the function that will return loss and gradients
+        self.get_loss_and_grads = K.function(
+            inputs=[self.model.input],
+            outputs=[self.loss] + self.grads
+        )
+
+    def get_loss_and_grads_1d(self, x_flat):
+        loss, grads = self.get_loss_and_grads(
+            [x_flat.reshape([-1, *self.input_img_shape])]
+        )
+
+        return loss.astype(np.float64), grads.flatten().astype(np.float64)
+
+    def content_loss(self, x, y):
+        return K.mean(
+            K.square(self.gram_matrix(x) - self.gram_matrix(y))
+        )
+
+    def gram_matrix(self, x):
+        # reshape the input to be of dimension [w x h, c]
+        x = tf.reshape(x, [-1, tf.shape(x)[-1]])
+        x = tf.matmul(x, x, transpose_a=True)
+
+        return x
+
+    def get_vgg(self, input_shape):
+        # get the pre-trained model
+        vgg16 = VGG16(input_shape=input_shape, include_top=False)
+
+        # create a list to hold the layers of the VGG16 model that we want the output of
+        outputs = [layer for layer in vgg16.layers if layer.name.endswith("conv1")]
+
+        # create a sequential model that is going to contain the modified VGG16 model
+        model = Model(inputs=vgg16.inputs, outputs=outputs)
+
+        return model
+
+
+    def fit(self, n_steps):
+        start_time = time.time()
+        for i in range(n_steps):
+            self.w, l, _ = fmin_l_bfgs_b(
+                func=self.get_loss_and_grads_1d,
+                x0=self.w.flatten(),
+                maxfun=20
+            )
+
+            # clip w
+            self.w = np.clip(self.w, -127, 127)
+
+            # trace
+            time_elapsed = time.time() - start_time
+            print(
+                "Iteration %d of %d completed. Loss: %d. Time elapsed: %d minutes and %d seconds."
+                % (i + 1, n_steps, l, time_elapsed // 60, time_elapsed % 60)
+            )
+
+
