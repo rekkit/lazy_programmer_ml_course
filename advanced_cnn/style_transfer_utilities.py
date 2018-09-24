@@ -45,8 +45,8 @@ class ImageHelper(object):
 
 
 class ContentGenerator(object):
-    def __init__(self, model, target_img):
-        self.model = model
+    def __init__(self, target_img, n_conv_layers):
+        self.model = self.get_vgg(target_img.shape, n_conv_layers)
         self.target_shape = target_img.shape
         self.target_img = K.constant(
             self.model.predict(target_img.reshape([-1, *self.target_shape]))
@@ -124,13 +124,13 @@ class ContentGenerator(object):
 
 
 class StyleGenerator(object):
-    def __init__(self, model, target_img):
-        self.model = model
+    def __init__(self, target_img):
+        self.model = self.get_vgg(target_img.shape)
         self.input_img_shape = target_img.shape
 
         # now calculate the targets and get the outputs of each of the convolutional layers
         self.targets = [K.constant(y) for y in self.model.predict(target_img.reshape([-1, *self.input_img_shape]))]
-        self.outputs = [layer for layer in self.model]
+        self.outputs = [layer.get_output_at(0) for layer in self.model.layers if layer.name.endswith("conv1")]
 
         # create the white noise that we need to change in order to get the same style as the input image
         self.w = np.random.randn(*self.input_img_shape).reshape([-1, *self.input_img_shape])
@@ -167,7 +167,7 @@ class StyleGenerator(object):
     def gram_matrix(self, x):
         # reshape the input to be of dimension [w x h, c]
         x = tf.reshape(x, [-1, tf.shape(x)[-1]])
-        x = tf.matmul(x, x, transpose_a=True)
+        x = tf.matmul(x, x, transpose_a=True) / tf.cast(tf.reduce_prod(tf.shape(x)), tf.float32)
 
         return x
 
@@ -176,7 +176,7 @@ class StyleGenerator(object):
         vgg16 = VGG16(input_shape=input_shape, include_top=False)
 
         # create a list to hold the layers of the VGG16 model that we want the output of
-        outputs = [layer for layer in vgg16.layers if layer.name.endswith("conv1")]
+        outputs = [layer.get_output_at(0) for layer in vgg16.layers if layer.name.endswith("conv1")]
 
         # create a sequential model that is going to contain the modified VGG16 model
         model = Model(inputs=vgg16.inputs, outputs=outputs)
@@ -202,5 +202,4 @@ class StyleGenerator(object):
                 "Iteration %d of %d completed. Loss: %d. Time elapsed: %d minutes and %d seconds."
                 % (i + 1, n_steps, l, time_elapsed // 60, time_elapsed % 60)
             )
-
 
