@@ -8,14 +8,21 @@ from scipy.optimize import fmin_l_bfgs_b
 
 # Keras imports
 import keras.backend as K
+from keras.preprocessing import image
 from keras.models import Model, Sequential
 from keras.applications.vgg16 import VGG16
 from keras.layers import Input, Lambda, Conv2D
 
+
 class ImageHelper(object):
-    def __init__(self, img_path):
+    def __init__(self, img_path, target_shape=None):
         self.img_path = img_path
-        self.img = np.array(Image.open(self.img_path))
+        if target_shape is None:
+            self.img = image.load_img(self.img_path)
+        else:
+            self.img = image.load_img(self.img_path, target_size=target_shape)
+
+        self.img = image.img_to_array(self.img)
         self.channel_means = np.mean(self.img, axis=(0, 1))
         self.img_transformed = deepcopy(self.img)
 
@@ -203,3 +210,116 @@ class StyleGenerator(object):
                 % (i + 1, n_steps, l, time_elapsed // 60, time_elapsed % 60)
             )
 
+
+class StyleTransferrer(object):
+    def __init__(self, style_img, content_img, n_conv_layers, style_weight=0.1):
+        self.style_img = style_img
+        self.content_img = content_img
+        self.style_shape = self.style_img.shape
+        self.content_shape = self.content_img.shape
+        self.n_conv_layers = n_conv_layers
+        self.style_weight = style_weight
+        self.content_model = None
+        self.style_model = None
+        self.content_target = None
+        self.style_target = None
+        self.content_loss = None
+        self.style_loss = 0
+
+        # initialize the variable we're going to tweak in order to get the desired output
+        self.w = np.random.randn(*self.content_shape)
+
+        # a few sanity checks
+        if n_conv_layers < 1 or n_conv_layers > 13:
+            raise ValueError(
+                "The VGG 16 model can be truncated at layers 1 through 13. You requested the model to be "
+                "truncated at layer {0}".format(n_conv_layers)
+            )
+
+        if self.content_shape != self.style_shape:
+            raise ValueError(
+                "The content and style images need to have the same dimensions, but the input dimensions are {0} and "
+                "{1}.".format(self.content_shape, self.style_shape)
+            )
+
+        self.model = VGG16(input_shape=self.content_shape, include_top=False)
+
+        # initialize the content and style generators
+        self.initialize_content_generator()
+        self.initialize_style_generator()
+
+        # define the loss
+        self.loss = self.content_loss + self.style_weight * self.style_loss
+
+        # define the gradients
+        self.grads = K.gradients(self.loss, self.model.input)
+
+        # define the function that will return loss and gradients
+        self.get_loss_and_grads = K.function(
+            inputs=[self.model.input],
+            outputs=[self.loss] + self.grads
+        )
+
+    def fit(self, n_steps):
+        start_time = time.time()
+        for i in range(n_steps):
+            self.w, l, _ = fmin_l_bfgs_b(
+                func=self.get_loss_and_grads_1d,
+                x0=self.w.flatten(),
+                maxfun=20
+            )
+
+            # clip w
+            self.w = np.clip(self.w, -127, 127)
+
+            # trace
+            time_elapsed = time.time() - start_time
+            print(
+                "Iteration %d of %d completed. Loss: %d. Time elapsed: %d minutes and %d seconds."
+                % (i + 1, n_steps, l, time_elapsed // 60, time_elapsed % 60)
+            )
+
+    def get_loss_and_grads_1d(self, x_flat):
+        loss, grads = self.get_loss_and_grads(
+            [x_flat.reshape([-1, *self.content_shape])]
+        )
+
+        return loss.astype(np.float64), grads.flatten().astype(np.float64)
+
+    def initialize_content_generator(self):
+        self.content_model = Model(
+            self.model.input,
+            [layer.get_output_at(0) for layer in self.model.layers if layer.__class__ == Conv2D][self.n_conv_layers-1]
+        )
+
+        self.content_target = K.constant(
+            self.content_model.predict(
+                self.content_img.reshape([-1, *self.content_shape])
+            )
+        )
+
+        self.content_loss = K.mean(
+            K.square(self.content_target - self.content_model.output)
+        )
+
+    def initialize_style_generator(self):
+        self.style_model = Model(
+            self.model.input,
+            [layer.get_output_at(0) for layer in self.model.layers if layer.name.endswith("conv1")]
+        )
+
+        self.style_target = [
+            K.variable(y) for y in self.style_model.predict(self.style_img.reshape([-1, *self.style_shape]))
+        ]
+
+        for output, target in zip(self.style_model.outputs, self.style_target):
+            self.style_loss += K.mean(
+                K.square(self.gram_matrix(output) - self.gram_matrix(target))
+            )
+
+    def gram_matrix(self, x):
+        # reshape the input to be of dimension [w x h, c]
+        x = tf.reshape(x, [-1, tf.shape(x)[-1]])
+        x = tf.matmul(x, x, transpose_a=True) / tf.cast(tf.reduce_prod(tf.shape(x)), tf.float32)
+
+        return x
